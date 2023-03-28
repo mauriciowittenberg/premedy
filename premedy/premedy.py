@@ -1,6 +1,6 @@
 import sys
 
-from premedy.resources import findings
+from premedy.premedy_finding import PremedyFinding
 from glob import glob
 from pydoc import locate
 import logging
@@ -24,6 +24,28 @@ class Premedy:
             project=self.project,
             use_subscription=self.use_subscription,
         )(self.consume)
+
+    def consume(self, message):
+        premedy_finding = PremedyFinding(message)
+        premedy_finding.save_in_gcs_bucket()
+        self.remediate(premedy_finding)
+        return {}
+
+    def remediate(self, premedy_finding: PremedyFinding):
+        for remediation in self.remediation_classes:
+            instance = remediation(premedy_finding=premedy_finding)
+            self.app.log.info(f" Check Remediation Class {instance.__class__}")
+            if instance.should_take_action():
+                try:
+                    self.app.log.info(
+                        f" Take Action Remediation Class {instance.__class__}"
+                    )
+                    response = instance.remediate()
+                    self.app.log.info(
+                        f" Action Response Remediation Class {instance.__class__}: {response}"
+                    )
+                except:
+                    self.app.log.error(f" Could not remediate: {instance.__class__}")
 
     def load_remediation_classes(self):
         sys.path.append(self.path)
@@ -55,25 +77,3 @@ class Premedy:
             logger.debug(f"loaded: class {class_name} from {file}")
 
         self.remediation_classes = remediation_classes
-
-    def consume(self, message):
-        finding_result = findings.parse_finding_result(message=message)
-        findings.save_in_gcs_bucket(finding_result=finding_result)
-        self.remediate(finding_result=finding_result)
-        return {}
-
-    def remediate(self, finding_result):
-        for remediation in self.remediation_classes:
-            instance = remediation(finding_result=finding_result)
-            self.app.log.info(f" Check Remediation Class {instance.__class__}")
-            if instance.should_take_action():
-                try:
-                    self.app.log.info(
-                        f" Take Action Remediation Class {instance.__class__}"
-                    )
-                    response = instance.remediate()
-                    self.app.log.info(
-                        f" Action Response Remediation Class {instance.__class__}: {response}"
-                    )
-                except:
-                    self.app.log.error(f" Could not remediate: {instance.__class__}")
